@@ -5,6 +5,11 @@ import json
 import time
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
+from dotenv import load_dotenv
+import os
+
+# Charger les variables d'environnement
+load_dotenv()
 
 class LiquidityPoolTracker:
     """Récupère les positions de liquidité pool pour une adresse EVM donnée"""
@@ -23,46 +28,8 @@ class LiquidityPoolTracker:
         self.delay = delay_between_calls
         self.last_call_time = 0
 
-        # ABI minimal pour NonfungiblePositionManager (Uniswap V3 / ProjectX)
-        self.position_manager_abi = [
-            {
-                "inputs": [{"internalType": "uint256", "name": "tokenId", "type": "uint256"}],
-                "name": "positions",
-                "outputs": [
-                    {"internalType": "uint96", "name": "nonce", "type": "uint96"},
-                    {"internalType": "address", "name": "operator", "type": "address"},
-                    {"internalType": "address", "name": "token0", "type": "address"},
-                    {"internalType": "address", "name": "token1", "type": "address"},
-                    {"internalType": "uint24", "name": "fee", "type": "uint24"},
-                    {"internalType": "int24", "name": "tickLower", "type": "int24"},
-                    {"internalType": "int24", "name": "tickUpper", "type": "int24"},
-                    {"internalType": "uint128", "name": "liquidity", "type": "uint128"},
-                    {"internalType": "uint256", "name": "feeGrowthInside0LastX128", "type": "uint256"},
-                    {"internalType": "uint256", "name": "feeGrowthInside1LastX128", "type": "uint256"},
-                    {"internalType": "uint128", "name": "tokensOwed0", "type": "uint128"},
-                    {"internalType": "uint128", "name": "tokensOwed1", "type": "uint128"}
-                ],
-                "stateMutability": "view",
-                "type": "function"
-            },
-            {
-                "inputs": [{"internalType": "address", "name": "owner", "type": "address"}],
-                "name": "balanceOf",
-                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-                "stateMutability": "view",
-                "type": "function"
-            },
-            {
-                "inputs": [
-                    {"internalType": "address", "name": "owner", "type": "address"},
-                    {"internalType": "uint256", "name": "index", "type": "uint256"}
-                ],
-                "name": "tokenOfOwnerByIndex",
-                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-                "stateMutability": "view",
-                "type": "function"
-            }
-        ]
+        # ABI complet du NonfungiblePositionManager
+        self.position_manager_abi = [{"inputs":[{"internalType":"address","name":"_factory","type":"address"},{"internalType":"address","name":"_WETH9","type":"address"},{"internalType":"address","name":"_tokenDescriptor_","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},{"anonymous":False,"inputs":[{"indexed":True,"internalType":"address","name":"owner","type":"address"},{"indexed":True,"internalType":"address","name":"approved","type":"address"},{"indexed":True,"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"Approval","type":"event"},{"anonymous":False,"inputs":[{"indexed":True,"internalType":"address","name":"owner","type":"address"},{"indexed":True,"internalType":"address","name":"operator","type":"address"},{"indexed":False,"internalType":"bool","name":"approved","type":"bool"}],"name":"ApprovalForAll","type":"event"},{"anonymous":False,"inputs":[{"indexed":True,"internalType":"uint256","name":"tokenId","type":"uint256"},{"indexed":False,"internalType":"address","name":"recipient","type":"address"},{"indexed":False,"internalType":"uint256","name":"amount0","type":"uint256"},{"indexed":False,"internalType":"uint256","name":"amount1","type":"uint256"}],"name":"Collect","type":"event"},{"anonymous":False,"inputs":[{"indexed":True,"internalType":"uint256","name":"tokenId","type":"uint256"},{"indexed":False,"internalType":"uint128","name":"liquidity","type":"uint128"},{"indexed":False,"internalType":"uint256","name":"amount0","type":"uint256"},{"indexed":False,"internalType":"uint256","name":"amount1","type":"uint256"}],"name":"DecreaseLiquidity","type":"event"},{"anonymous":False,"inputs":[{"indexed":True,"internalType":"uint256","name":"tokenId","type":"uint256"},{"indexed":False,"internalType":"uint128","name":"liquidity","type":"uint128"},{"indexed":False,"internalType":"uint256","name":"amount0","type":"uint256"},{"indexed":False,"internalType":"uint256","name":"amount1","type":"uint256"}],"name":"IncreaseLiquidity","type":"event"},{"anonymous":False,"inputs":[{"indexed":True,"internalType":"address","name":"from","type":"address"},{"indexed":True,"internalType":"address","name":"to","type":"address"},{"indexed":True,"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"Transfer","type":"event"},{"inputs":[],"name":"DOMAIN_SEPARATOR","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"PERMIT_TYPEHASH","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"WETH9","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"approve","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"owner","type":"address"}],"name":"balanceOf","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"baseURI","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"pure","type":"function"},{"inputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"burn","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"components":[{"internalType":"uint256","name":"tokenId","type":"uint256"},{"internalType":"address","name":"recipient","type":"address"},{"internalType":"uint128","name":"amount0Max","type":"uint128"},{"internalType":"uint128","name":"amount1Max","type":"uint128"}],"internalType":"struct INonfungiblePositionManager.CollectParams","name":"params","type":"tuple"}],"name":"collect","outputs":[{"internalType":"uint256","name":"amount0","type":"uint256"},{"internalType":"uint256","name":"amount1","type":"uint256"}],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"address","name":"token0","type":"address"},{"internalType":"address","name":"token1","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"uint160","name":"sqrtPriceX96","type":"uint160"}],"name":"createAndInitializePoolIfNecessary","outputs":[{"internalType":"address","name":"pool","type":"address"}],"stateMutability":"payable","type":"function"},{"inputs":[{"components":[{"internalType":"uint256","name":"tokenId","type":"uint256"},{"internalType":"uint128","name":"liquidity","type":"uint128"},{"internalType":"uint256","name":"amount0Min","type":"uint256"},{"internalType":"uint256","name":"amount1Min","type":"uint256"},{"internalType":"uint256","name":"deadline","type":"uint256"}],"internalType":"struct INonfungiblePositionManager.DecreaseLiquidityParams","name":"params","type":"tuple"}],"name":"decreaseLiquidity","outputs":[{"internalType":"uint256","name":"amount0","type":"uint256"},{"internalType":"uint256","name":"amount1","type":"uint256"}],"stateMutability":"payable","type":"function"},{"inputs":[],"name":"factory","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"getApproved","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"components":[{"internalType":"uint256","name":"tokenId","type":"uint256"},{"internalType":"uint256","name":"amount0Desired","type":"uint256"},{"internalType":"uint256","name":"amount1Desired","type":"uint256"},{"internalType":"uint256","name":"amount0Min","type":"uint256"},{"internalType":"uint256","name":"amount1Min","type":"uint256"},{"internalType":"uint256","name":"deadline","type":"uint256"}],"internalType":"struct INonfungiblePositionManager.IncreaseLiquidityParams","name":"params","type":"tuple"}],"name":"increaseLiquidity","outputs":[{"internalType":"uint128","name":"liquidity","type":"uint128"},{"internalType":"uint256","name":"amount0","type":"uint256"},{"internalType":"uint256","name":"amount1","type":"uint256"}],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"address","name":"owner","type":"address"},{"internalType":"address","name":"operator","type":"address"}],"name":"isApprovedForAll","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"components":[{"internalType":"address","name":"token0","type":"address"},{"internalType":"address","name":"token1","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickLower","type":"int24"},{"internalType":"int24","name":"tickUpper","type":"int24"},{"internalType":"uint256","name":"amount0Desired","type":"uint256"},{"internalType":"uint256","name":"amount1Desired","type":"uint256"},{"internalType":"uint256","name":"amount0Min","type":"uint256"},{"internalType":"uint256","name":"amount1Min","type":"uint256"},{"internalType":"address","name":"recipient","type":"address"},{"internalType":"uint256","name":"deadline","type":"uint256"}],"internalType":"struct INonfungiblePositionManager.MintParams","name":"params","type":"tuple"}],"name":"mint","outputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"},{"internalType":"uint128","name":"liquidity","type":"uint128"},{"internalType":"uint256","name":"amount0","type":"uint256"},{"internalType":"uint256","name":"amount1","type":"uint256"}],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"bytes[]","name":"data","type":"bytes[]"}],"name":"multicall","outputs":[{"internalType":"bytes[]","name":"results","type":"bytes[]"}],"stateMutability":"payable","type":"function"},{"inputs":[],"name":"name","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"ownerOf","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"spender","type":"address"},{"internalType":"uint256","name":"tokenId","type":"uint256"},{"internalType":"uint256","name":"deadline","type":"uint256"},{"internalType":"uint8","name":"v","type":"uint8"},{"internalType":"bytes32","name":"r","type":"bytes32"},{"internalType":"bytes32","name":"s","type":"bytes32"}],"name":"permit","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"positions","outputs":[{"internalType":"uint96","name":"nonce","type":"uint96"},{"internalType":"address","name":"operator","type":"address"},{"internalType":"address","name":"token0","type":"address"},{"internalType":"address","name":"token1","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickLower","type":"int24"},{"internalType":"int24","name":"tickUpper","type":"int24"},{"internalType":"uint128","name":"liquidity","type":"uint128"},{"internalType":"uint256","name":"feeGrowthInside0LastX128","type":"uint256"},{"internalType":"uint256","name":"feeGrowthInside1LastX128","type":"uint256"},{"internalType":"uint128","name":"tokensOwed0","type":"uint128"},{"internalType":"uint128","name":"tokensOwed1","type":"uint128"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"refundETH","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"address","name":"from","type":"address"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"safeTransferFrom","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"from","type":"address"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"tokenId","type":"uint256"},{"internalType":"bytes","name":"_data","type":"bytes"}],"name":"safeTransferFrom","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"token","type":"address"},{"internalType":"uint256","name":"value","type":"uint256"},{"internalType":"uint256","name":"deadline","type":"uint256"},{"internalType":"uint8","name":"v","type":"uint8"},{"internalType":"bytes32","name":"r","type":"bytes32"},{"internalType":"bytes32","name":"s","type":"bytes32"}],"name":"selfPermit","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"address","name":"token","type":"address"},{"internalType":"uint256","name":"nonce","type":"uint256"},{"internalType":"uint256","name":"expiry","type":"uint256"},{"internalType":"uint8","name":"v","type":"uint8"},{"internalType":"bytes32","name":"r","type":"bytes32"},{"internalType":"bytes32","name":"s","type":"bytes32"}],"name":"selfPermitAllowed","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"address","name":"token","type":"address"},{"internalType":"uint256","name":"nonce","type":"uint256"},{"internalType":"uint256","name":"expiry","type":"uint256"},{"internalType":"uint8","name":"v","type":"uint8"},{"internalType":"bytes32","name":"r","type":"bytes32"},{"internalType":"bytes32","name":"s","type":"bytes32"}],"name":"selfPermitAllowedIfNecessary","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"address","name":"token","type":"address"},{"internalType":"uint256","name":"value","type":"uint256"},{"internalType":"uint256","name":"deadline","type":"uint256"},{"internalType":"uint8","name":"v","type":"uint8"},{"internalType":"bytes32","name":"r","type":"bytes32"},{"internalType":"bytes32","name":"s","type":"bytes32"}],"name":"selfPermitIfNecessary","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"address","name":"operator","type":"address"},{"internalType":"bool","name":"approved","type":"bool"}],"name":"setApprovalForAll","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes4","name":"interfaceId","type":"bytes4"}],"name":"supportsInterface","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"token","type":"address"},{"internalType":"uint256","name":"amountMinimum","type":"uint256"},{"internalType":"address","name":"recipient","type":"address"}],"name":"sweepToken","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[],"name":"symbol","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"index","type":"uint256"}],"name":"tokenByIndex","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"owner","type":"address"},{"internalType":"uint256","name":"index","type":"uint256"}],"name":"tokenOfOwnerByIndex","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"tokenURI","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"totalSupply","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"from","type":"address"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"transferFrom","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"uint256","name":"amount0Owed","type":"uint256"},{"internalType":"uint256","name":"amount1Owed","type":"uint256"},{"internalType":"bytes","name":"data","type":"bytes"}],"name":"uniswapV3MintCallback","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"uint256","name":"amountMinimum","type":"uint256"},{"internalType":"address","name":"recipient","type":"address"}],"name":"unwrapWETH9","outputs":[],"stateMutability":"payable","type":"function"},{"stateMutability":"payable","type":"receive"}]
 
         # ABI minimal pour ERC20 (pour récupérer decimals et symbol)
         self.erc20_abi = [
@@ -101,12 +68,33 @@ class LiquidityPoolTracker:
             }
         ]
 
+        # ABI pour Factory
+        self.factory_abi = [
+            {
+                "inputs": [
+                    {"internalType": "address", "name": "tokenA", "type": "address"},
+                    {"internalType": "address", "name": "tokenB", "type": "address"},
+                    {"internalType": "uint24", "name": "fee", "type": "uint24"}
+                ],
+                "name": "getPool",
+                "outputs": [{"internalType": "address", "name": "pool", "type": "address"}],
+                "stateMutability": "view",
+                "type": "function"
+            }
+        ]
+
         # Adresses des Position Managers selon la chaîne
         self.position_managers = {
             1: "0xC36442b4a4522E871399CD717aBDD847Ab11FE88",  # Ethereum - Uniswap V3
-            999: "0xeaD19AE861c29bBb2101E834922B2FEee69B9091",  # HEVM - ProejctX
             137: "0xC36442b4a4522E871399CD717aBDD847Ab11FE88",  # Polygon - Uniswap V3
-            # Ajouter d'autres chaînes selon ProjectX
+            999: "0xeaD19AE861c29bBb2101E834922B2FEee69B9091",  # Hyperliquid EVM - ProjectX
+        }
+
+        # Adresses des Factories selon la chaîne
+        self.factories = {
+            1: "0x1F98431c8aD98523631AE4a59f267346ea31F984",  # Ethereum - Uniswap V3
+            137: "0x1F98431c8aD98523631AE4a59f267346ea31F984",  # Polygon - Uniswap V3
+            999: "0xFf7B3e8C00e57ea31477c32A5B52a58Eea47b072",  # Hyperliquid EVM - ProjectX
         }
 
     def _rate_limit_sleep(self):
@@ -187,6 +175,48 @@ class LiquidityPoolTracker:
             print(f"Erreur lors de la récupération des infos du token: {e}")
             return {'symbol': 'UNKNOWN', 'decimals': 18}
 
+    def get_pool_address(self, token0: str, token1: str, fee: int, factory_address: Optional[str] = None) -> Optional[str]:
+        """
+        Récupère l'adresse du pool à partir de la factory
+        
+        Args:
+            token0: Adresse du token0
+            token1: Adresse du token1
+            fee: Fee tier
+            factory_address: Adresse de la factory (optionnel)
+            
+        Returns:
+            Adresse du pool ou None
+        """
+        if factory_address is None:
+            factory_address = self.factories.get(self.chain_id)
+            if not factory_address:
+                return None
+
+        try:
+            factory_contract = self.w3.eth.contract(
+                address=Web3.to_checksum_address(factory_address),
+                abi=self.factory_abi
+            )
+
+            def _get_pool():
+                return factory_contract.functions.getPool(
+                    Web3.to_checksum_address(token0),
+                    Web3.to_checksum_address(token1),
+                    fee
+                ).call()
+
+            pool_address = self._call_with_retry(_get_pool)
+
+            # Vérifier que le pool existe (pas 0x0)
+            if pool_address == "0x0000000000000000000000000000000000000000":
+                return None
+
+            return pool_address
+        except Exception as e:
+            print(f"Erreur lors de la récupération de l'adresse du pool: {e}")
+            return None
+
     def calculate_token_amounts(self, liquidity: int, sqrt_price_x96: int,
                                 tick_lower: int, tick_upper: int,
                                 current_tick: int, decimals0: int, decimals1: int) -> Dict:
@@ -207,38 +237,52 @@ class LiquidityPoolTracker:
         """
         import math
 
-        # Calculer sqrtPrice pour les bornes
-        sqrt_price_lower = math.sqrt(1.0001 ** tick_lower) * (2 ** 96)
-        sqrt_price_upper = math.sqrt(1.0001 ** tick_upper) * (2 ** 96)
+        # Calculer les sqrt prices
+        sqrt_price_a = math.sqrt(1.0001 ** tick_lower)
+        sqrt_price_b = math.sqrt(1.0001 ** tick_upper)
+        sqrt_price_current = sqrt_price_x96 / (2 ** 96)
 
         amount0 = 0
         amount1 = 0
 
         if current_tick < tick_lower:
             # Position entièrement en token0
-            amount0 = liquidity * ((sqrt_price_upper - sqrt_price_lower) / (sqrt_price_lower * sqrt_price_upper))
+            amount0 = liquidity * (1 / sqrt_price_a - 1 / sqrt_price_b)
         elif current_tick >= tick_upper:
             # Position entièrement en token1
-            amount1 = liquidity * (sqrt_price_upper - sqrt_price_lower) / (2 ** 96)
+            amount1 = liquidity * (sqrt_price_b - sqrt_price_a)
         else:
             # Position dans le range, contient les deux tokens
-            amount0 = liquidity * ((sqrt_price_upper - sqrt_price_x96) / (sqrt_price_x96 * sqrt_price_upper))
-            amount1 = liquidity * (sqrt_price_x96 - sqrt_price_lower) / (2 ** 96)
+            amount0 = liquidity * (1 / sqrt_price_current - 1 / sqrt_price_b)
+            amount1 = liquidity * (sqrt_price_current - sqrt_price_a)
 
         # Convertir en valeurs décimales
         amount0_decimal = amount0 / (10 ** decimals0)
         amount1_decimal = amount1 / (10 ** decimals1)
 
-        # Calculer les pourcentages
-        total_value = amount0_decimal + amount1_decimal  # Approximation si même valeur USD
-        pct0 = (amount0_decimal / total_value * 100) if total_value > 0 else 0
-        pct1 = (amount1_decimal / total_value * 100) if total_value > 0 else 0
+        # Calculer le prix actuel (token1 par token0)
+        current_price = sqrt_price_current ** 2
+
+        # Ajuster le prix pour les décimales
+        price_adjusted = current_price * (10 ** decimals0) / (10 ** decimals1)
+
+        # Calculer la valeur totale en termes de token1
+        value0_in_token1 = amount0_decimal * price_adjusted
+        value1_in_token1 = amount1_decimal
+
+        total_value = value0_in_token1 + value1_in_token1
+
+        pct0 = (value0_in_token1 / total_value * 100) if total_value > 0 else 0
+        pct1 = (value1_in_token1 / total_value * 100) if total_value > 0 else 0
 
         return {
             'amount0': amount0_decimal,
             'amount1': amount1_decimal,
             'percentage0': pct0,
-            'percentage1': pct1
+            'percentage1': pct1,
+            'value0_in_token1': value0_in_token1,
+            'value1_in_token1': value1_in_token1,
+            'price': price_adjusted
         }
 
     def get_pool_current_tick(self, pool_address: str) -> Optional[Dict]:
@@ -364,10 +408,13 @@ class LiquidityPoolTracker:
                         position_info['token0_decimals'] = token0_info['decimals']
                         position_info['token1_decimals'] = token1_info['decimals']
 
-                        # Calculer l'adresse du pool (simplifié - pourrait nécessiter la factory)
-                        # Pour l'instant, on peut utiliser le pool directement si fourni
-                        # Sinon on laisse None et l'utilisateur peut le fournir manuellement
-                        position_info['pool_address'] = None
+                        # Récupérer l'adresse du pool via la factory
+                        pool_address = self.get_pool_address(
+                            token0_address,
+                            token1_address,
+                            position_data[4]  # fee
+                        )
+                        position_info['pool_address'] = pool_address
 
                     positions.append(position_info)
 
@@ -387,7 +434,7 @@ class LiquidityPoolTracker:
         
         Args:
             position: Dict contenant les informations de la position
-            pool_address: Adresse du pool pour récupérer le tick actuel
+            pool_address: Adresse du pool pour récupérer le tick actuel (optionnel, auto-détecté si disponible)
         """
         print(f"\n{'='*70}")
         print(f"Position NFT #{position['token_id']}")
@@ -405,6 +452,10 @@ class LiquidityPoolTracker:
         print(f"  Tick Upper: {position['tick_upper']} (Prix: {position['price_upper']:.6f})")
         print(f"\nLiquidité: {position['liquidity']}")
 
+        # Utiliser l'adresse du pool de la position si disponible et non fournie en paramètre
+        if pool_address is None and 'pool_address' in position:
+            pool_address = position['pool_address']
+
         # Récupérer les infos du pool
         pool_info = None
         if pool_address:
@@ -414,6 +465,7 @@ class LiquidityPoolTracker:
             current_tick = pool_info['current_tick']
             print(f"\n{'─'*70}")
             print(f"📊 État du Pool:")
+            print(f"  Adresse: {pool_address}")
             print(f"  Tick actuel: {current_tick}")
             print(f"  Prix actuel: {pool_info['price']:.6f}")
 
@@ -449,38 +501,38 @@ class LiquidityPoolTracker:
                 print(f"  {token0_sym}: {amounts['amount0']:.6f} ({amounts['percentage0']:.1f}%)")
                 print(f"  {token1_sym}: {amounts['amount1']:.6f} ({amounts['percentage1']:.1f}%)")
         else:
-            print(f"\n⚠️  Adresse du pool non fournie - impossible de vérifier le statut")
+            print(f"\n⚠️  Impossible de récupérer les infos du pool - vérifier l'adresse de la factory")
 
         print(f"{'='*70}")
 
 
 # Exemple d'utilisation
 if __name__ == "__main__":
-    # Configuration
-    RPC_URL = "https://hyperliquid-mainnet.g.alchemy.com/v2/gC8xL79TzkmWsPzt69Dp3Mkvg30bvpzN"  # Remplacer par votre clé
-    WALLET_ADDRESS = "0x6af0b3433e185614f2ee8a6cdb789fe1de4ccd05" # Adresse à analyser
-    CHAIN_ID = 999  # Ethereum mainnet
-    DELAY = 1.0  # Délai d'1 seconde entre les appels (augmenter si nécessaire)
+    # Charger la configuration depuis .env
+    RPC_URL = os.getenv('RPC_URL')
+    WALLET_ADDRESS = os.getenv('WALLET_ADDRESS', '0x6af0b3433e185614f2ee8a6cdb789fe1de4ccd05')
+    CHAIN_ID = int(os.getenv('CHAIN_ID', '999'))
+    DELAY = float(os.getenv('DELAY', '1.0'))
+
+    # Vérifier que RPC_URL est défini
+    if not RPC_URL:
+        print("❌ Erreur: RPC_URL n'est pas défini dans le fichier .env")
+        print("Créez un fichier .env en copiant .env.example et ajoutez votre clé API")
+        exit(1)
 
     # Créer le tracker avec gestion du rate limiting
     tracker = LiquidityPoolTracker(RPC_URL, CHAIN_ID, delay_between_calls=DELAY)
 
     print(f"Récupération des positions avec délai de {DELAY}s entre chaque appel...")
+    print(f"Wallet: {WALLET_ADDRESS}")
+    print(f"Position Manager: {tracker.position_managers[CHAIN_ID]}")
+    print(f"Factory: {tracker.factories[CHAIN_ID]}\n")
 
-    # Récupérer les positions (avec infos des tokens)
+    # Récupérer les positions (avec infos des tokens et auto-détection du pool)
     positions = tracker.get_positions(WALLET_ADDRESS, include_pool_info=True)
 
-    # Dictionnaire pour stocker les adresses de pools si vous les connaissez
-    # Format: {token_id: pool_address}
-    pool_addresses = {
-        # Exemple: 12345: "0xPoolAddress..."
-    }
-
-    # Afficher les positions
+    # Afficher les positions (le pool_address est maintenant auto-détecté)
     for position in positions:
-        pool_addr = pool_addresses.get(position['token_id'])
-        tracker.display_position_info(position, pool_address=pool_addr)
+        tracker.display_position_info(position)
 
     print(f"\n\nTotal: {len(positions)} position(s) active(s) trouvée(s)")
-    print(f"\n💡 Note: Les 'tokens dus' (tokensOwed) s'accumulent uniquement quand vous")
-    print(f"   collectez les fees ou retirez de la liquidité. C'est normal qu'ils soient à 0.")
