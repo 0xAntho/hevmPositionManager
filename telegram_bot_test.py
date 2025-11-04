@@ -23,5 +23,5 @@ if __name__ == "__main__":
     print("🧪 Mode TEST - Utilisation du bot de test")
     print(f"Token: {TELEGRAM_TOKEN[:10]}...")
 
-    bot = TelegramLPBot(TELEGRAM_TOKEN, RPC_URL, WALLET_ADDRESS, CHAIN_ID)
+    bot = TelegramLPBot(TELEGRAM_TOKEN, RPC_URL, CHAIN_ID)
     bot.run()
