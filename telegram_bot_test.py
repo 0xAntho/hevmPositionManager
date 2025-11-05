@@ -8,7 +8,7 @@ load_dotenv()
 os.environ['TELEGRAM_BOT_TOKEN'] = os.getenv('TELEGRAM_BOT_TOKEN_TEST')
 
 # Importer et lancer le bot
-from TelegramManager import TelegramLPBot
+from telegram_bot import TelegramLPBot
 
 if __name__ == "__main__":
     TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN_TEST')
