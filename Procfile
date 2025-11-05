@@ -1,1 +1,1 @@
-﻿worker: python TelegramManager.py
+﻿worker: python telegram_bot.py
