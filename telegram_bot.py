@@ -62,17 +62,20 @@ class TelegramLPBot:
 
         if not Web3.is_address(address):
             await update.message.reply_text(
-                "❌ Invalid address. Please send a valid EVM address starting with 0x"
+                "❌ Invalid address. Please send a valid Ethereum address starting with 0x"
             )
             return WAITING_ADDRESS
 
         address = Web3.to_checksum_address(address)
         context.user_data['pending_address'] = address
+        context.user_data['adding_wallet'] = False
+        context.user_data['adding_alias'] = True
 
         await update.message.reply_text(
-            f"✅ Address validated!\n\n"
+            f"✅ Address validated!\n`{address}`\n\n"
             f"Do you want to add an alias for this wallet?\n\n"
-            f"Send an alias (e.g., 'Main Wallet') or /skip to continue without alias."
+            f"Send an alias (e.g., 'Main Wallet') or /skip to continue without alias.",
+            parse_mode='Markdown'
         )
         return WAITING_ALIAS
 
@@ -81,22 +84,38 @@ class TelegramLPBot:
         alias = update.message.text.strip()
         address = context.user_data.get('pending_address')
 
-        success = self.db.add_wallet(user_id, address, alias)
+        if not address:
+            await update.message.reply_text("❌ Error: No pending address. Please start over with /add")
+            context.user_data.clear()
+            return ConversationHandler.END
 
-        if success:
-            success_msg = (
-                f"✅ *Wallet added successfully!*\n\n"
-                f"📍 Address: `{address}`\n"
-                f"🏷️ Alias: {alias}\n\n"
-                f"Use the buttons below to interact:"
-            )
+        try:
+            success = self.db.add_wallet(user_id, address, alias)
+
+            if success:
+                display_name = self.db.get_wallet_display_name(address, alias)
+                success_msg = (
+                    f"✅ *Wallet added successfully!*\n\n"
+                    f"📍 {display_name}\n\n"
+                    f"You can now view positions for this wallet!"
+                )
+                await update.message.reply_text(
+                    success_msg,
+                    parse_mode='Markdown',
+                    reply_markup=self.get_main_keyboard()
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ *Error: This wallet is already registered!*\n\n"
+                    "Use /wallets to view your wallets.",
+                    parse_mode='Markdown'
+                )
+        except Exception as e:
             await update.message.reply_text(
-                success_msg,
-                parse_mode='Markdown',
-                reply_markup=self.get_main_keyboard()
+                f"❌ *Error adding wallet:*\n`{str(e)}`\n\n"
+                "Please try again with /add",
+                parse_mode='Markdown'
             )
-        else:
-            await update.message.reply_text("❌ This wallet is already registered!")
 
         context.user_data.clear()
         return ConversationHandler.END
@@ -105,21 +124,38 @@ class TelegramLPBot:
         user_id = update.effective_user.id
         address = context.user_data.get('pending_address')
 
-        success = self.db.add_wallet(user_id, address, None)
+        if not address:
+            await update.message.reply_text("❌ Error: No pending address. Please start over with /add")
+            context.user_data.clear()
+            return ConversationHandler.END
 
-        if success:
-            success_msg = (
-                f"✅ *Wallet added successfully!*\n\n"
-                f"📍 Address: `{address}`\n\n"
-                f"Use the buttons below to interact:"
-            )
+        try:
+            success = self.db.add_wallet(user_id, address, None)
+
+            if success:
+                display_name = self.db.get_wallet_display_name(address, None)
+                success_msg = (
+                    f"✅ *Wallet added successfully!*\n\n"
+                    f"📍 {display_name}\n\n"
+                    f"You can now view positions for this wallet!"
+                )
+                await update.message.reply_text(
+                    success_msg,
+                    parse_mode='Markdown',
+                    reply_markup=self.get_main_keyboard()
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ *Error: This wallet is already registered!*\n\n"
+                    "Use /wallets to view your wallets.",
+                    parse_mode='Markdown'
+                )
+        except Exception as e:
             await update.message.reply_text(
-                success_msg,
-                parse_mode='Markdown',
-                reply_markup=self.get_main_keyboard()
+                f"❌ *Error adding wallet:*\n`{str(e)}`\n\n"
+                "Please try again with /add",
+                parse_mode='Markdown'
             )
-        else:
-            await update.message.reply_text("❌ This wallet is already registered!")
 
         context.user_data.clear()
         return ConversationHandler.END
@@ -308,14 +344,27 @@ class TelegramLPBot:
 
     async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
+        text = update.message.text
 
+        # Check if we're in "adding wallet" mode
+        if context.user_data.get('adding_wallet'):
+            # This is an address
+            if Web3.is_address(text.strip()):
+                return await self.receive_address(update, context)
+            else:
+                await update.message.reply_text("❌ Invalid address format. Please send a valid address starting with 0x")
+                return
+
+        # Check if we're in "adding alias" mode
+        if context.user_data.get('adding_alias'):
+            return await self.receive_alias(update, context)
+
+        # Normal menu handling
         if not self.db.get_active_wallet(user_id):
             await update.message.reply_text(
                 "❌ No active wallet configured. Use /start to add one."
             )
             return
-
-        text = update.message.text
 
         if text == "📊 My Positions":
             await self.view_positions(update, context)
@@ -340,17 +389,19 @@ class TelegramLPBot:
             display_name = self.db.get_wallet_display_name(address, wallet_info['alias'] if wallet_info else None)
 
             await query.message.edit_text(
-                f"✅ Active wallet changed to:\n{display_name}",
+                f"✅ *Active wallet changed to:*\n{display_name}",
                 parse_mode='Markdown'
             )
 
         elif query.data == 'add_wallet':
             await query.answer()
+            context.user_data['adding_wallet'] = True
+            context.user_data['adding_alias'] = False
             await query.message.reply_text(
-                "Send me the wallet address you want to add.\n\n",
+                "📝 Send me the wallet address you want to add.\n\n"
+                "Or send /cancel to abort.",
                 parse_mode='Markdown'
             )
-            return WAITING_ADDRESS
 
         elif query.data == 'delete_wallet':
             await query.answer()
@@ -397,16 +448,30 @@ class TelegramLPBot:
             await query.message.edit_text("❌ Deletion cancelled.")
 
     async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text("❌ Operation cancelled.")
+        context.user_data.clear()
+        await update.message.reply_text(
+            "❌ Operation cancelled.",
+            reply_markup=self.get_main_keyboard()
+        )
         return ConversationHandler.END
+
+    async def add_wallet_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Start the add wallet process"""
+        await update.message.reply_text(
+            "Send me the wallet address you want to add.\n\n"
+            "📝 Format: `0x...`",
+            parse_mode='Markdown'
+        )
+        return WAITING_ADDRESS
 
     def run(self):
         application = Application.builder().token(self.token).build()
 
-        conv_handler = ConversationHandler(
+        # Main conversation for adding wallets
+        add_wallet_handler = ConversationHandler(
             entry_points=[
                 CommandHandler("start", self.start),
-                CommandHandler("add", self.start)
+                CommandHandler("add", self.add_wallet_start)
             ],
             states={
                 WAITING_ADDRESS: [
@@ -417,10 +482,11 @@ class TelegramLPBot:
                     CommandHandler("skip", self.skip_alias)
                 ]
             },
-            fallbacks=[CommandHandler("cancel", self.cancel)]
+            fallbacks=[CommandHandler("cancel", self.cancel)],
+            per_message=False
         )
 
-        application.add_handler(conv_handler)
+        application.add_handler(add_wallet_handler)
         application.add_handler(CommandHandler("wallets", self.my_wallets))
         application.add_handler(CommandHandler("positions", self.view_positions))
         application.add_handler(CommandHandler("alerts", self.out_of_range_positions))
