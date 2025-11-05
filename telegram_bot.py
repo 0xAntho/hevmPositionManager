@@ -52,7 +52,6 @@ class TelegramLPBot:
             f"🤖 *Welcome to LP Position Tracker!*\n\n"
             f"🔗 Chain: Hyperliquid EVM (ID: {self.chain_id})\n\n"
             f"To get started, send me a wallet address.\n\n"
-            f"📝 Format: `0x...`"
         )
         await update.message.reply_text(welcome_msg, parse_mode='Markdown')
         return WAITING_ADDRESS
@@ -63,7 +62,7 @@ class TelegramLPBot:
 
         if not Web3.is_address(address):
             await update.message.reply_text(
-                "❌ Invalid address. Please send a valid Ethereum address starting with 0x"
+                "❌ Invalid address. Please send a valid EVM address starting with 0x"
             )
             return WAITING_ADDRESS
 
@@ -348,8 +347,7 @@ class TelegramLPBot:
         elif query.data == 'add_wallet':
             await query.answer()
             await query.message.reply_text(
-                "Send me the wallet address you want to add.\n\n"
-                "📝 Format: `0x...`",
+                "Send me the wallet address you want to add.\n\n",
                 parse_mode='Markdown'
             )
             return WAITING_ADDRESS
