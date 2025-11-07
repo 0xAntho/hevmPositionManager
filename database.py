@@ -37,9 +37,22 @@ class Database:
                 address TEXT NOT NULL,
                 alias TEXT,
                 is_active BOOLEAN DEFAULT 0,
+                notifications_enabled BOOLEAN DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(user_id),
                 UNIQUE(user_id, address)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS position_alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                wallet_address TEXT NOT NULL,
+                position_id INTEGER NOT NULL,
+                alerted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id),
+                UNIQUE(user_id, wallet_address, position_id)
             )
         """)
 
@@ -181,3 +194,76 @@ class Database:
 
         user_ids = [row[0] for row in cursor.fetchall()]
         return user_ids
+
+    def get_user_wallets_for_monitoring(self, user_id: int) -> List[Dict]:
+        """Get wallets with notifications enabled for monitoring"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT address, alias, notifications_enabled, is_active
+            FROM wallets 
+            WHERE user_id = ? AND notifications_enabled = 1
+            ORDER BY created_at DESC
+        """, (user_id,))
+
+        wallets = []
+        for row in cursor.fetchall():
+            wallets.append({
+                'address': row[0],
+                'alias': row[1],
+                'notifications_enabled': bool(row[2]),
+                'is_active': bool(row[3])
+            })
+
+        return wallets
+
+    def has_been_alerted(self, user_id: int, wallet_address: str, position_id: int) -> bool:
+        """Check if user has already been alerted for this position"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT COUNT(*) FROM position_alerts 
+            WHERE user_id = ? AND wallet_address = ? AND position_id = ?
+        """, (user_id, wallet_address, position_id))
+
+        return cursor.fetchone()[0] > 0
+
+    def mark_as_alerted(self, user_id: int, wallet_address: str, position_id: int):
+        """Mark that user has been alerted for this position"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT OR IGNORE INTO position_alerts (user_id, wallet_address, position_id)
+            VALUES (?, ?, ?)
+        """, (user_id, wallet_address, position_id))
+
+        conn.commit()
+
+    def clear_position_alert(self, user_id: int, wallet_address: str, position_id: int):
+        """Clear alert for position (when it comes back in range)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            DELETE FROM position_alerts 
+            WHERE user_id = ? AND wallet_address = ? AND position_id = ?
+        """, (user_id, wallet_address, position_id))
+
+        conn.commit()
+
+    def toggle_notifications(self, user_id: int, address: str, enabled: bool):
+        """Enable/disable notifications for a wallet"""
+        address = Web3.to_checksum_address(address)
+
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "UPDATE wallets SET notifications_enabled = ? WHERE user_id = ? AND address = ?",
+            (1 if enabled else 0, user_id, address)
+        )
+
+        conn.commit()

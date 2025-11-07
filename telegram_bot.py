@@ -5,6 +5,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 from web3 import Web3
 import asyncio
 from typing import List, Dict, Optional
+from datetime import datetime
 
 load_dotenv()
 
@@ -16,13 +17,15 @@ WAITING_ADDRESS, WAITING_ALIAS, WAITING_BROADCAST_MESSAGE = range(3)
 
 
 class TelegramLPBot:
-    def __init__(self, token: str, rpc_url: str, chain_id: int = 999, admin_ids: List[int] = None):
+    def __init__(self, token: str, rpc_url: str, chain_id: int = 999, admin_ids: List[int] = None, monitor_interval: int = 60):
         self.token = token
         self.rpc_url = rpc_url
         self.chain_id = chain_id
         self.tracker = LiquidityPoolTracker(rpc_url, chain_id, delay_between_calls=1.0)
         self.db = Database()
         self.admin_ids = admin_ids or []
+        self.monitor_interval = monitor_interval
+        self.application = None
 
     def get_main_keyboard(self):
         keyboard = [
@@ -53,7 +56,6 @@ class TelegramLPBot:
             f"🤖 *Welcome to LP Position Tracker!*\n\n"
             f"🔗 Chain: Hyperliquid EVM (ID: {self.chain_id})\n\n"
             f"To get started, send me a wallet address.\n\n"
-            f"📝 Format: `0x...`"
         )
         await update.message.reply_text(welcome_msg, parse_mode='Markdown')
         return WAITING_ADDRESS
@@ -178,19 +180,23 @@ class TelegramLPBot:
         for wallet in wallets:
             display_name = self.db.get_wallet_display_name(wallet['address'], wallet['alias'])
             status = "✅" if wallet['is_active'] else "⚪"
-            msg += f"{status} {display_name}\n"
+            notif_status = "🔔" if wallet.get('notifications_enabled', True) else "🔕"
+            msg += f"{status} {notif_status} {display_name}\n"
 
+            button_text = f"{'✅' if wallet['is_active'] else '👁️'} {wallet['alias'] or wallet['address'][:8]}..."
             keyboard.append([
-                InlineKeyboardButton(
-                    f"{'✅' if wallet['is_active'] else '👁️'} {wallet['alias'] or wallet['address'][:8]}...",
-                    callback_data=f"select_{wallet['address']}"
-                )
+                InlineKeyboardButton(button_text, callback_data=f"select_{wallet['address']}")
             ])
 
         keyboard.append([
             InlineKeyboardButton("➕ Add Wallet", callback_data="add_wallet"),
+            InlineKeyboardButton("🔔 Notifications", callback_data="manage_notifications")
+        ])
+        keyboard.append([
             InlineKeyboardButton("🗑️ Delete", callback_data="delete_wallet")
         ])
+
+        msg += "\n🔔 = Notifications ON\n🔕 = Notifications OFF"
 
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(msg, parse_mode='Markdown', reply_markup=reply_markup)
@@ -386,6 +392,98 @@ class TelegramLPBot:
             await self.broadcast_confirm_handler(update, context)
             return
 
+        # Handle notification management
+        if query.data == 'manage_notifications':
+            await query.answer()
+            wallets = self.db.get_user_wallets(user_id)
+
+            keyboard = []
+            for wallet in wallets:
+                display_name = self.db.get_wallet_display_name(wallet['address'], wallet['alias'])
+                notif_status = "🔔" if wallet.get('notifications_enabled', True) else "🔕"
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"{notif_status} {display_name}",
+                        callback_data=f"toggle_notif_{wallet['address']}"
+                    )
+                ])
+
+            keyboard.append([InlineKeyboardButton("« Back", callback_data="back_to_wallets")])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await query.message.edit_text(
+                "🔔 *Notification Settings*\n\n"
+                "Toggle notifications for each wallet:\n"
+                "🔔 = ON | 🔕 = OFF",
+                parse_mode='Markdown',
+                reply_markup=reply_markup
+            )
+            return
+
+        if query.data.startswith('toggle_notif_'):
+            address = query.data.replace('toggle_notif_', '')
+            wallets = self.db.get_user_wallets(user_id)
+            wallet = next((w for w in wallets if w['address'] == address), None)
+
+            if wallet:
+                new_state = not wallet.get('notifications_enabled', True)
+                self.db.toggle_notifications(user_id, address, new_state)
+
+                status = "enabled" if new_state else "disabled"
+                await query.answer(f"✅ Notifications {status}!")
+
+                # Refresh the notification management view
+                wallets = self.db.get_user_wallets(user_id)
+                keyboard = []
+                for w in wallets:
+                    display_name = self.db.get_wallet_display_name(w['address'], w['alias'])
+                    notif_status = "🔔" if w.get('notifications_enabled', True) else "🔕"
+                    keyboard.append([
+                        InlineKeyboardButton(
+                            f"{notif_status} {display_name}",
+                            callback_data=f"toggle_notif_{w['address']}"
+                        )
+                    ])
+
+                keyboard.append([InlineKeyboardButton("« Back", callback_data="back_to_wallets")])
+                reply_markup = InlineKeyboardMarkup(keyboard)
+
+                await query.message.edit_reply_markup(reply_markup=reply_markup)
+            return
+
+        if query.data == 'back_to_wallets':
+            await query.answer()
+            # Recreate the wallets view
+            wallets = self.db.get_user_wallets(user_id)
+
+            msg = "💼 *Your Wallets:*\n\n"
+            keyboard = []
+
+            for wallet in wallets:
+                display_name = self.db.get_wallet_display_name(wallet['address'], wallet['alias'])
+                status = "✅" if wallet['is_active'] else "⚪"
+                notif_status = "🔔" if wallet.get('notifications_enabled', True) else "🔕"
+                msg += f"{status} {notif_status} {display_name}\n"
+
+                button_text = f"{'✅' if wallet['is_active'] else '👁️'} {wallet['alias'] or wallet['address'][:8]}..."
+                keyboard.append([
+                    InlineKeyboardButton(button_text, callback_data=f"select_{wallet['address']}")
+                ])
+
+            keyboard.append([
+                InlineKeyboardButton("➕ Add Wallet", callback_data="add_wallet"),
+                InlineKeyboardButton("🔔 Notifications", callback_data="manage_notifications")
+            ])
+            keyboard.append([
+                InlineKeyboardButton("🗑️ Delete", callback_data="delete_wallet")
+            ])
+
+            msg += "\n🔔 = Notifications ON\n🔕 = Notifications OFF"
+
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.message.edit_text(msg, parse_mode='Markdown', reply_markup=reply_markup)
+            return
+
         if query.data.startswith('select_'):
             address = query.data.replace('select_', '')
             self.db.set_active_wallet(user_id, address)
@@ -453,6 +551,95 @@ class TelegramLPBot:
         elif query.data == 'cancel_delete':
             await query.answer()
             await query.message.edit_text("❌ Deletion cancelled.")
+
+    async def monitor_positions(self, context: ContextTypes.DEFAULT_TYPE):
+        """Background task to monitor positions"""
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔍 Monitoring positions...")
+
+        try:
+            user_ids = self.db.get_all_user_ids()
+
+            for user_id in user_ids:
+                try:
+                    wallets = self.db.get_user_wallets_for_monitoring(user_id)
+
+                    for wallet in wallets:
+                        address = wallet['address']
+
+                        # Get positions for this wallet
+                        positions = await asyncio.to_thread(
+                            self.tracker.get_positions,
+                            address,
+                            include_pool_info=True
+                        )
+
+                        for position in positions:
+                            if not position.get('pool_address'):
+                                continue
+
+                            pool_info = self.tracker.get_pool_current_tick(position['pool_address'])
+                            if not pool_info:
+                                continue
+
+                            current_tick = pool_info['current_tick']
+                            position_id = position['token_id']
+                            in_range = position['tick_lower'] <= current_tick <= position['tick_upper']
+
+                            if not in_range:
+                                # Position is OUT OF RANGE
+                                if not self.db.has_been_alerted(user_id, address, position_id):
+                                    # Send alert
+                                    await self.send_out_of_range_alert(user_id, wallet, position, pool_info)
+                                    self.db.mark_as_alerted(user_id, address, position_id)
+                            else:
+                                # Position is back IN RANGE - clear alert
+                                self.db.clear_position_alert(user_id, address, position_id)
+
+                        # Small delay between wallets
+                        await asyncio.sleep(2)
+
+                except Exception as e:
+                    print(f"Error monitoring user {user_id}: {e}")
+                    continue
+
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ Monitoring complete")
+
+        except Exception as e:
+            print(f"Error in monitor_positions: {e}")
+
+    async def send_out_of_range_alert(self, user_id: int, wallet: Dict, position: Dict, pool_info: Dict):
+        """Send OUT OF RANGE alert to user"""
+        token0_sym = position.get('token0_symbol', 'Token0')
+        token1_sym = position.get('token1_symbol', 'Token1')
+        wallet_display = self.db.get_wallet_display_name(wallet['address'], wallet.get('alias'))
+
+        current_tick = pool_info['current_tick']
+
+        alert_msg = (
+            f"🚨 *OUT OF RANGE ALERT*\n\n"
+            f"💼 Wallet: {wallet_display}\n"
+            f"📌 Position #{position['token_id']}\n"
+            f"🔄 Pair: *{token0_sym}/{token1_sym}*\n\n"
+            f"📊 Range: {position['tick_lower']} to {position['tick_upper']}\n"
+            f"🎯 Current Tick: {current_tick}\n"
+            f"💰 Current Price: ${pool_info['price']:.6f}\n\n"
+        )
+
+        if current_tick < position['tick_lower']:
+            alert_msg += f"⚠️ Price is *below* range (100% {token0_sym})\n"
+        else:
+            alert_msg += f"⚠️ Price is *above* range (100% {token1_sym})\n"
+
+        alert_msg += f"\nUse /positions to view details."
+
+        try:
+            await self.application.bot.send_message(
+                chat_id=user_id,
+                text=alert_msg,
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            print(f"Failed to send alert to {user_id}: {e}")
 
     async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
@@ -598,7 +785,7 @@ class TelegramLPBot:
         return WAITING_ADDRESS
 
     def run(self):
-        application = Application.builder().token(self.token).build()
+        self.application = Application.builder().token(self.token).build()
 
         # Main conversation for adding wallets
         add_wallet_handler = ConversationHandler(
@@ -631,22 +818,32 @@ class TelegramLPBot:
             per_message=False
         )
 
-        application.add_handler(add_wallet_handler)
-        application.add_handler(broadcast_handler)
-        application.add_handler(CommandHandler("wallets", self.my_wallets))
-        application.add_handler(CommandHandler("positions", self.view_positions))
-        application.add_handler(CommandHandler("alerts", self.out_of_range_positions))
-        application.add_handler(CallbackQueryHandler(self.button_handler))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text))
+        self.application.add_handler(add_wallet_handler)
+        self.application.add_handler(broadcast_handler)
+        self.application.add_handler(CommandHandler("wallets", self.my_wallets))
+        self.application.add_handler(CommandHandler("positions", self.view_positions))
+        self.application.add_handler(CommandHandler("alerts", self.out_of_range_positions))
+        self.application.add_handler(CallbackQueryHandler(self.button_handler))
+        self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text))
+
+        # Schedule monitoring job
+        job_queue = self.application.job_queue
+        job_queue.run_repeating(
+            self.monitor_positions,
+            interval=self.monitor_interval * 60,
+            first=60
+        )
 
         print("🤖 Bot started!")
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
+        print(f"🔍 Monitoring interval: {self.monitor_interval} minutes")
+        self.application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
     TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
     RPC_URL = os.getenv('RPC_URL')
     CHAIN_ID = int(os.getenv('CHAIN_ID', '999'))
+    MONITOR_INTERVAL = int(os.getenv('MONITOR_INTERVAL_MINUTES', '60'))
 
     # Parse admin IDs from environment variable
     admin_ids_str = os.getenv('ADMIN_USER_IDS', '')
@@ -659,5 +856,5 @@ if __name__ == "__main__":
         print("❌ Error: RPC_URL not defined in .env")
         exit(1)
 
-    bot = TelegramLPBot(TELEGRAM_TOKEN, RPC_URL, CHAIN_ID, ADMIN_IDS)
+    bot = TelegramLPBot(TELEGRAM_TOKEN, RPC_URL, CHAIN_ID, ADMIN_IDS, MONITOR_INTERVAL)
     bot.run()
