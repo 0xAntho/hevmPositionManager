@@ -12,16 +12,17 @@ from PoolManager import LiquidityPoolTracker
 from database import Database
 
 # Conversation states
-WAITING_ADDRESS, WAITING_ALIAS, WAITING_NEW_ALIAS = range(3)
+WAITING_ADDRESS, WAITING_ALIAS, WAITING_BROADCAST_MESSAGE = range(3)
 
 
 class TelegramLPBot:
-    def __init__(self, token: str, rpc_url: str, chain_id: int = 999):
+    def __init__(self, token: str, rpc_url: str, chain_id: int = 999, admin_ids: List[int] = None):
         self.token = token
         self.rpc_url = rpc_url
         self.chain_id = chain_id
         self.tracker = LiquidityPoolTracker(rpc_url, chain_id, delay_between_calls=1.0)
         self.db = Database()
+        self.admin_ids = admin_ids or []
 
     def get_main_keyboard(self):
         keyboard = [
@@ -52,6 +53,7 @@ class TelegramLPBot:
             f"🤖 *Welcome to LP Position Tracker!*\n\n"
             f"🔗 Chain: Hyperliquid EVM (ID: {self.chain_id})\n\n"
             f"To get started, send me a wallet address.\n\n"
+            f"📝 Format: `0x...`"
         )
         await update.message.reply_text(welcome_msg, parse_mode='Markdown')
         return WAITING_ADDRESS
@@ -379,6 +381,11 @@ class TelegramLPBot:
         query = update.callback_query
         user_id = update.effective_user.id
 
+        # Handle broadcast confirmation
+        if query.data in ['broadcast_confirm', 'broadcast_cancel']:
+            await self.broadcast_confirm_handler(update, context)
+            return
+
         if query.data.startswith('select_'):
             address = query.data.replace('select_', '')
             self.db.set_active_wallet(user_id, address)
@@ -455,11 +462,137 @@ class TelegramLPBot:
         )
         return ConversationHandler.END
 
+    def is_admin(self, user_id: int) -> bool:
+        """Check if user is admin"""
+        return user_id in self.admin_ids
+
+    async def broadcast_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Start broadcast message (admin only)"""
+        user_id = update.effective_user.id
+
+        if not self.is_admin(user_id):
+            await update.message.reply_text("❌ Access denied. Admin only.")
+            return ConversationHandler.END
+
+        total_users = len(self.db.get_all_user_ids())
+
+        await update.message.reply_text(
+            f"📢 *Broadcast Mode*\n\n"
+            f"Send the message you want to broadcast to *{total_users} users*.\n\n"
+            f"You can use Markdown formatting:\n"
+            f"- `*bold*` → *bold*\n"
+            f"- `_italic_` → _italic_\n"
+            f"- `` `code` `` → `code`\n\n"
+            f"Send /cancel to abort.",
+            parse_mode='Markdown'
+        )
+        return WAITING_BROADCAST_MESSAGE
+
+    async def receive_broadcast(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Receive and send broadcast message"""
+        user_id = update.effective_user.id
+
+        if not self.is_admin(user_id):
+            await update.message.reply_text("❌ Access denied.")
+            return ConversationHandler.END
+
+        broadcast_message = update.message.text
+        user_ids = self.db.get_all_user_ids()
+
+        # Confirmation
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ Confirm & Send", callback_data="broadcast_confirm"),
+                InlineKeyboardButton("❌ Cancel", callback_data="broadcast_cancel")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        context.user_data['broadcast_message'] = broadcast_message
+
+        await update.message.reply_text(
+            f"📢 *Preview:*\n\n{broadcast_message}\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"👥 Will be sent to: *{len(user_ids)} users*\n\n"
+            f"Confirm?",
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+
+        return ConversationHandler.END
+
+    async def broadcast_confirm_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle broadcast confirmation"""
+        query = update.callback_query
+        user_id = update.effective_user.id
+
+        if not self.is_admin(user_id):
+            await query.answer("❌ Access denied.")
+            return
+
+        if query.data == "broadcast_confirm":
+            await query.answer()
+            broadcast_message = context.user_data.get('broadcast_message')
+
+            if not broadcast_message:
+                await query.message.edit_text("❌ No message found. Please start over with /broadcast")
+                return
+
+            user_ids = self.db.get_all_user_ids()
+
+            status_msg = await query.message.edit_text(
+                f"📤 Sending broadcast to {len(user_ids)} users...\n"
+                f"Progress: 0/{len(user_ids)}"
+            )
+
+            success_count = 0
+            failed_count = 0
+
+            for idx, target_user_id in enumerate(user_ids):
+                try:
+                    await context.bot.send_message(
+                        chat_id=target_user_id,
+                        text=f"📢 *Announcement*\n\n{broadcast_message}",
+                        parse_mode='Markdown'
+                    )
+                    success_count += 1
+
+                    # Update progress every 10 users
+                    if (idx + 1) % 10 == 0 or (idx + 1) == len(user_ids):
+                        await status_msg.edit_text(
+                            f"📤 Sending broadcast...\n"
+                            f"Progress: {idx + 1}/{len(user_ids)}\n"
+                            f"✅ Success: {success_count}\n"
+                            f"❌ Failed: {failed_count}"
+                        )
+
+                    # Rate limiting
+                    await asyncio.sleep(0.05)
+
+                except Exception as e:
+                    failed_count += 1
+                    print(f"Failed to send to {target_user_id}: {e}")
+
+            await status_msg.edit_text(
+                f"✅ *Broadcast Complete!*\n\n"
+                f"📊 Results:\n"
+                f"✅ Sent: {success_count}\n"
+                f"❌ Failed: {failed_count}\n"
+                f"📊 Total: {len(user_ids)}",
+                parse_mode='Markdown'
+            )
+
+            context.user_data.clear()
+
+        elif query.data == "broadcast_cancel":
+            await query.answer("Cancelled")
+            await query.message.edit_text("❌ Broadcast cancelled.")
+            context.user_data.clear()
+
     async def add_wallet_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Start the add wallet process"""
         await update.message.reply_text(
-            "Send me the wallet address you want to add.\n\n"
-            "📝 Format: `0x...`",
+            "Send me the wallet address you want to add.\n\n",
             parse_mode='Markdown'
         )
         return WAITING_ADDRESS
@@ -486,7 +619,20 @@ class TelegramLPBot:
             per_message=False
         )
 
+        # Broadcast conversation (admin only)
+        broadcast_handler = ConversationHandler(
+            entry_points=[CommandHandler("broadcast", self.broadcast_start)],
+            states={
+                WAITING_BROADCAST_MESSAGE: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_broadcast)
+                ]
+            },
+            fallbacks=[CommandHandler("cancel", self.cancel)],
+            per_message=False
+        )
+
         application.add_handler(add_wallet_handler)
+        application.add_handler(broadcast_handler)
         application.add_handler(CommandHandler("wallets", self.my_wallets))
         application.add_handler(CommandHandler("positions", self.view_positions))
         application.add_handler(CommandHandler("alerts", self.out_of_range_positions))
@@ -502,6 +648,10 @@ if __name__ == "__main__":
     RPC_URL = os.getenv('RPC_URL')
     CHAIN_ID = int(os.getenv('CHAIN_ID', '999'))
 
+    # Parse admin IDs from environment variable
+    admin_ids_str = os.getenv('ADMIN_USER_IDS', '')
+    ADMIN_IDS = [int(id.strip()) for id in admin_ids_str.split(',') if id.strip().isdigit()]
+
     if not TELEGRAM_TOKEN:
         print("❌ Error: TELEGRAM_BOT_TOKEN not defined in .env")
         exit(1)
@@ -509,5 +659,5 @@ if __name__ == "__main__":
         print("❌ Error: RPC_URL not defined in .env")
         exit(1)
 
-    bot = TelegramLPBot(TELEGRAM_TOKEN, RPC_URL, CHAIN_ID)
+    bot = TelegramLPBot(TELEGRAM_TOKEN, RPC_URL, CHAIN_ID, ADMIN_IDS)
     bot.run()

@@ -171,3 +171,13 @@ class Database:
         if alias:
             return f"{alias} ({address[:6]}...{address[-4:]})"
         return f"{address[:6]}...{address[-4:]}"
+
+    def get_all_user_ids(self) -> List[int]:
+        """Get all user IDs that have registered with the bot"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT DISTINCT user_id FROM users ORDER BY created_at")
+
+        user_ids = [row[0] for row in cursor.fetchall()]
+        return user_ids
