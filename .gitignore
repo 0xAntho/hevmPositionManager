@@ -1,4 +1,4 @@
-﻿*.env
-.db
+﻿.env
+*.db
 __pycache__/
 .idea/
