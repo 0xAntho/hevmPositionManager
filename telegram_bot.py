@@ -29,33 +29,61 @@ class TelegramLPBot:
 
     def get_main_keyboard(self):
         keyboard = [
-            [KeyboardButton("📊 My Positions"), KeyboardButton("🔄 Refresh")],
-            [KeyboardButton("⚠️ Alerts"), KeyboardButton("💼 My Wallets")]
+            [KeyboardButton("🏠 Menu"), KeyboardButton("📊 Positions")],
+            [KeyboardButton("⚠️ Out of Range"), KeyboardButton("💼 My Wallets")]
         ]
         return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+
+    async def show_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Display main menu with info"""
+        user_id = update.effective_user.id
+        wallets = self.db.get_user_wallets(user_id)
+
+        menu_msg = (
+            f"🏠 *ProjectX LP tracker - Main Menu*\n\n"
+            f"📊 Monitor your liquidity pool positions and receive alerts when they go out of range.\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🔗 *Supported Protocols:*\n"
+            f"• Project X (Hyperliquid EVM)\n\n"
+        )
+
+        if wallets:
+            menu_msg += f"💼 *Your Registered Wallets:* ({len(wallets)})\n"
+            for wallet in wallets:
+                display_name = self.db.get_wallet_display_name(wallet['address'], wallet.get('alias'))
+                status = "✅" if wallet['is_active'] else "⚪"
+                notif = "🔔" if wallet.get('notifications_enabled', True) else "🔕"
+                menu_msg += f"{status} {notif} {display_name}\n"
+        else:
+            menu_msg += f"💼 *No wallets registered yet*\nUse /add to add your first wallet.\n"
+
+        menu_msg += (
+            f"\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"📱 *Quick Actions:*\n"
+            f"• 🔄 Refresh - View all positions\n"
+            f"• ⚠️ Out of Range - See positions needing attention\n"
+            f"• 💼 My Wallets - Manage your wallets\n\n"
+            f"💡 Use the buttons below or type /help for commands."
+        )
+
+        await update.message.reply_text(
+            menu_msg,
+            parse_mode='Markdown',
+            reply_markup=self.get_main_keyboard()
+        )
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         wallets = self.db.get_user_wallets(user_id)
 
         if wallets:
-            active_wallet = self.db.get_active_wallet(user_id)
-            welcome_msg = (
-                f"👋 *Welcome back!*\n\n"
-                f"📍 Active wallet:\n`{active_wallet}`\n\n"
-                f"Use /wallets to manage your wallets."
-            )
-            await update.message.reply_text(
-                welcome_msg,
-                parse_mode='Markdown',
-                reply_markup=self.get_main_keyboard()
-            )
+            await self.show_menu(update, context)
             return ConversationHandler.END
 
         welcome_msg = (
             f"🤖 *Welcome to LP Position Tracker!*\n\n"
             f"🔗 Chain: Hyperliquid EVM (ID: {self.chain_id})\n\n"
-            f"To get started, send me a wallet address.\n\n"
+            f"To get started, send me a wallet address."
         )
         await update.message.reply_text(welcome_msg, parse_mode='Markdown')
         return WAITING_ADDRESS
@@ -356,7 +384,6 @@ class TelegramLPBot:
 
         # Check if we're in "adding wallet" mode
         if context.user_data.get('adding_wallet'):
-            # This is an address
             if Web3.is_address(text.strip()):
                 return await self.receive_address(update, context)
             else:
@@ -367,21 +394,21 @@ class TelegramLPBot:
         if context.user_data.get('adding_alias'):
             return await self.receive_alias(update, context)
 
-        # Normal menu handling
-        if not self.db.get_active_wallet(user_id):
-            await update.message.reply_text(
-                "❌ No active wallet configured. Use /start to add one."
-            )
-            return
-
-        if text == "📊 My Positions":
+        # Handle menu buttons
+        if text == "🏠 Menu":
+            await self.show_menu(update, context)
+        elif text == "📊 My Positions":
             await self.view_positions(update, context)
-        elif text == "🔄 Refresh":
-            await self.view_positions(update, context)
-        elif text == "⚠️ Alerts":
+        elif text == "⚠️ Out of Range":
             await self.out_of_range_positions(update, context)
         elif text == "💼 My Wallets":
             await self.my_wallets(update, context)
+        else:
+            # Unknown command
+            await update.message.reply_text(
+                "❓ Unknown command. Use the buttons below or /help for available commands.",
+                reply_markup=self.get_main_keyboard()
+            )
 
     async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
@@ -820,6 +847,7 @@ class TelegramLPBot:
 
         self.application.add_handler(add_wallet_handler)
         self.application.add_handler(broadcast_handler)
+        self.application.add_handler(CommandHandler("menu", self.show_menu))
         self.application.add_handler(CommandHandler("wallets", self.my_wallets))
         self.application.add_handler(CommandHandler("positions", self.view_positions))
         self.application.add_handler(CommandHandler("alerts", self.out_of_range_positions))
