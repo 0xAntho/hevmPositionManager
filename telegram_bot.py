@@ -12,7 +12,6 @@ load_dotenv()
 from PoolManager import LiquidityPoolTracker
 from database import Database
 
-# Conversation states
 WAITING_ADDRESS, WAITING_ALIAS, WAITING_BROADCAST_MESSAGE = range(3)
 
 
@@ -40,7 +39,7 @@ class TelegramLPBot:
         wallets = self.db.get_user_wallets(user_id)
 
         menu_msg = (
-            f"🏠 *ProjectX LP tracker - Main Menu*\n\n"
+            f"🏠 *Project X position tracker - Main Menu*\n\n"
             f"📊 Monitor your liquidity pool positions and receive alerts when they go out of range.\n\n"
             f"━━━━━━━━━━━━━━━━━━━━\n\n"
             f"🔗 *Supported Protocols:*\n"
@@ -60,7 +59,7 @@ class TelegramLPBot:
         menu_msg += (
             f"\n━━━━━━━━━━━━━━━━━━━━\n\n"
             f"📱 *Quick Actions:*\n"
-            f"• 🔄 Refresh - View all positions\n"
+            f"• 📊 Positions - View all positions\n"
             f"• ⚠️ Out of Range - See positions needing attention\n"
             f"• 💼 My Wallets - Manage your wallets\n\n"
             f"💡 Use the buttons below or type /help for commands."
@@ -382,7 +381,6 @@ class TelegramLPBot:
         user_id = update.effective_user.id
         text = update.message.text
 
-        # Check if we're in "adding wallet" mode
         if context.user_data.get('adding_wallet'):
             if Web3.is_address(text.strip()):
                 return await self.receive_address(update, context)
@@ -390,21 +388,30 @@ class TelegramLPBot:
                 await update.message.reply_text("❌ Invalid address format. Please send a valid address starting with 0x")
                 return
 
-        # Check if we're in "adding alias" mode
         if context.user_data.get('adding_alias'):
             return await self.receive_alias(update, context)
 
-        # Handle menu buttons
         if text == "🏠 Menu":
             await self.show_menu(update, context)
-        elif text == "📊 My Positions":
-            await self.view_positions(update, context)
-        elif text == "⚠️ Out of Range":
-            await self.out_of_range_positions(update, context)
         elif text == "💼 My Wallets":
             await self.my_wallets(update, context)
+        elif text == "📊 Positions":
+            if not self.db.get_active_wallet(user_id):
+                await update.message.reply_text(
+                    "❌ No active wallet configured. Use /wallets to select or add a wallet.",
+                    reply_markup=self.get_main_keyboard()
+                )
+                return
+            await self.view_positions(update, context)
+        elif text == "⚠️ Out of Range":
+            if not self.db.get_active_wallet(user_id):
+                await update.message.reply_text(
+                    "❌ No active wallet configured. Use /wallets to select or add a wallet.",
+                    reply_markup=self.get_main_keyboard()
+                )
+                return
+            await self.out_of_range_positions(update, context)
         else:
-            # Unknown command
             await update.message.reply_text(
                 "❓ Unknown command. Use the buttons below or /help for available commands.",
                 reply_markup=self.get_main_keyboard()
@@ -414,12 +421,10 @@ class TelegramLPBot:
         query = update.callback_query
         user_id = update.effective_user.id
 
-        # Handle broadcast confirmation
         if query.data in ['broadcast_confirm', 'broadcast_cancel']:
             await self.broadcast_confirm_handler(update, context)
             return
 
-        # Handle notification management
         if query.data == 'manage_notifications':
             await query.answer()
             wallets = self.db.get_user_wallets(user_id)
@@ -459,7 +464,6 @@ class TelegramLPBot:
                 status = "enabled" if new_state else "disabled"
                 await query.answer(f"✅ Notifications {status}!")
 
-                # Refresh the notification management view
                 wallets = self.db.get_user_wallets(user_id)
                 keyboard = []
                 for w in wallets:
@@ -480,7 +484,6 @@ class TelegramLPBot:
 
         if query.data == 'back_to_wallets':
             await query.answer()
-            # Recreate the wallets view
             wallets = self.db.get_user_wallets(user_id)
 
             msg = "💼 *Your Wallets:*\n\n"
@@ -593,7 +596,6 @@ class TelegramLPBot:
                     for wallet in wallets:
                         address = wallet['address']
 
-                        # Get positions for this wallet
                         positions = await asyncio.to_thread(
                             self.tracker.get_positions,
                             address,
@@ -613,16 +615,12 @@ class TelegramLPBot:
                             in_range = position['tick_lower'] <= current_tick <= position['tick_upper']
 
                             if not in_range:
-                                # Position is OUT OF RANGE
                                 if not self.db.has_been_alerted(user_id, address, position_id):
-                                    # Send alert
                                     await self.send_out_of_range_alert(user_id, wallet, position, pool_info)
                                     self.db.mark_as_alerted(user_id, address, position_id)
                             else:
-                                # Position is back IN RANGE - clear alert
                                 self.db.clear_position_alert(user_id, address, position_id)
 
-                        # Small delay between wallets
                         await asyncio.sleep(2)
 
                 except Exception as e:
@@ -635,7 +633,6 @@ class TelegramLPBot:
             print(f"Error in monitor_positions: {e}")
 
     async def send_out_of_range_alert(self, user_id: int, wallet: Dict, position: Dict, pool_info: Dict):
-        """Send OUT OF RANGE alert to user"""
         token0_sym = position.get('token0_symbol', 'Token0')
         token1_sym = position.get('token1_symbol', 'Token1')
         wallet_display = self.db.get_wallet_display_name(wallet['address'], wallet.get('alias'))
@@ -676,6 +673,30 @@ class TelegramLPBot:
         )
         return ConversationHandler.END
 
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Display help with available commands"""
+        help_msg = (
+            f"ℹ️ *Available Commands:*\n\n"
+            f"👤 *Account Management:*\n"
+            f"/start - Launch bot and show menu\n"
+            f"/menu - Display main menu\n"
+            f"/add - Add a new wallet\n"
+            f"/wallets - Manage your wallets\n\n"
+            f"📊 *Positions:*\n"
+            f"/positions - View all LP positions\n"
+            f"/alerts - View OUT OF RANGE positions\n\n"
+            f"🔔 *Notifications:*\n"
+            f"Managed via /wallets → 🔔 Notifications\n"
+            f"🎛️ *Admin Commands:*\n"
+            f"/broadcast - Send message to all users (admin only)"
+        )
+
+        await update.message.reply_text(
+            help_msg,
+            parse_mode='Markdown',
+            reply_markup=self.get_main_keyboard()
+        )
+
     def is_admin(self, user_id: int) -> bool:
         """Check if user is admin"""
         return user_id in self.admin_ids
@@ -713,7 +734,6 @@ class TelegramLPBot:
         broadcast_message = update.message.text
         user_ids = self.db.get_all_user_ids()
 
-        # Confirmation
         keyboard = [
             [
                 InlineKeyboardButton("✅ Confirm & Send", callback_data="broadcast_confirm"),
@@ -771,7 +791,6 @@ class TelegramLPBot:
                     )
                     success_count += 1
 
-                    # Update progress every 10 users
                     if (idx + 1) % 10 == 0 or (idx + 1) == len(user_ids):
                         await status_msg.edit_text(
                             f"📤 Sending broadcast...\n"
@@ -780,7 +799,6 @@ class TelegramLPBot:
                             f"❌ Failed: {failed_count}"
                         )
 
-                    # Rate limiting
                     await asyncio.sleep(0.05)
 
                 except Exception as e:
@@ -804,7 +822,6 @@ class TelegramLPBot:
             context.user_data.clear()
 
     async def add_wallet_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Start the add wallet process"""
         await update.message.reply_text(
             "Send me the wallet address you want to add.\n\n",
             parse_mode='Markdown'
@@ -814,7 +831,6 @@ class TelegramLPBot:
     def run(self):
         self.application = Application.builder().token(self.token).build()
 
-        # Main conversation for adding wallets
         add_wallet_handler = ConversationHandler(
             entry_points=[
                 CommandHandler("start", self.start),
@@ -833,7 +849,6 @@ class TelegramLPBot:
             per_message=False
         )
 
-        # Broadcast conversation (admin only)
         broadcast_handler = ConversationHandler(
             entry_points=[CommandHandler("broadcast", self.broadcast_start)],
             states={
@@ -848,13 +863,13 @@ class TelegramLPBot:
         self.application.add_handler(add_wallet_handler)
         self.application.add_handler(broadcast_handler)
         self.application.add_handler(CommandHandler("menu", self.show_menu))
+        self.application.add_handler(CommandHandler("help", self.help_command))
         self.application.add_handler(CommandHandler("wallets", self.my_wallets))
         self.application.add_handler(CommandHandler("positions", self.view_positions))
         self.application.add_handler(CommandHandler("alerts", self.out_of_range_positions))
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text))
 
-        # Schedule monitoring job
         job_queue = self.application.job_queue
         job_queue.run_repeating(
             self.monitor_positions,
@@ -873,7 +888,6 @@ if __name__ == "__main__":
     CHAIN_ID = int(os.getenv('CHAIN_ID', '999'))
     MONITOR_INTERVAL = int(os.getenv('MONITOR_INTERVAL_MINUTES', '60'))
 
-    # Parse admin IDs from environment variable
     admin_ids_str = os.getenv('ADMIN_USER_IDS', '')
     ADMIN_IDS = [int(id.strip()) for id in admin_ids_str.split(',') if id.strip().isdigit()]
 
