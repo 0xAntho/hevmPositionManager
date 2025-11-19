@@ -39,7 +39,7 @@ class TelegramLPBot:
         wallets = self.db.get_user_wallets(user_id)
 
         menu_msg = (
-            f"🏠 *Project X position tracker - Main Menu*\n\n"
+            f"🏠 *LP Position Tracker - Main Menu*\n\n"
             f"📊 Monitor your liquidity pool positions and receive alerts when they go out of range.\n\n"
             f"━━━━━━━━━━━━━━━━━━━━\n\n"
             f"🔗 *Supported Protocols:*\n"
@@ -334,8 +334,7 @@ class TelegramLPBot:
 
         msg = header
         msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-        msg += f"📌 Pair: *{token0_sym}/{token1_sym}*\n"
-        msg += f"💰 Fee: {position['fee'] / 10000}%\n\n"
+        msg += f"📌 Pair: *{token0_sym}/{token1_sym}*\n\n"
 
         msg += f"📊 *Liquidity Range:*\n"
         msg += f"  Lower: {position['tick_lower']} (${position['price_lower']:.6f})\n"
@@ -373,7 +372,20 @@ class TelegramLPBot:
 
                     msg += f"💵 *Composition:*\n"
                     msg += f"  {token0_sym}: {amounts['amount0']:.6f} ({amounts['percentage0']:.1f}%)\n"
-                    msg += f"  {token1_sym}: {amounts['amount1']:.6f} ({amounts['percentage1']:.1f}%)\n"
+                    msg += f"  {token1_sym}: {amounts['amount1']:.6f} ({amounts['percentage1']:.1f}%)\n\n"
+
+                    tokens_owed0 = position.get('tokens_owed0', 0)
+                    tokens_owed1 = position.get('tokens_owed1', 0)
+
+                    if tokens_owed0 > 0 or tokens_owed1 > 0:
+                        owed0_decimal = tokens_owed0 / (10 ** position['token0_decimals'])
+                        owed1_decimal = tokens_owed1 / (10 ** position['token1_decimals'])
+
+                        msg += f"💰 *Unclaimed Fees:*\n"
+                        if owed0_decimal > 0:
+                            msg += f"  {token0_sym}: {owed0_decimal:.6f}\n"
+                        if owed1_decimal > 0:
+                            msg += f"  {token1_sym}: {owed1_decimal:.6f}\n"
 
         return msg
 
@@ -615,10 +627,23 @@ class TelegramLPBot:
                             in_range = position['tick_lower'] <= current_tick <= position['tick_upper']
 
                             if not in_range:
-                                if not self.db.has_been_alerted(user_id, address, position_id):
+                                out_of_range_since = self.db.get_out_of_range_since(user_id, address, position_id)
+
+                                if not out_of_range_since:
+                                    current_time = datetime.now().isoformat()
                                     await self.send_out_of_range_alert(user_id, wallet, position, pool_info)
-                                    self.db.mark_as_alerted(user_id, address, position_id)
+                                    self.db.mark_as_alerted(user_id, address, position_id, 'out_of_range', current_time)
+                                else:
+                                    out_time = datetime.fromisoformat(out_of_range_since)
+                                    hours_out = (datetime.now() - out_time).total_seconds() / 3600
+
+                                    if hours_out >= 4 and not self.db.has_been_alerted(user_id, address, position_id, 'out_4h'):
+                                        await self.send_extended_out_of_range_alert(user_id, wallet, position, pool_info, hours_out)
+                                        self.db.mark_as_alerted(user_id, address, position_id, 'out_4h')
                             else:
+                                if self.db.has_been_alerted(user_id, address, position_id, 'out_of_range'):
+                                    await self.send_back_in_range_alert(user_id, wallet, position, pool_info)
+
                                 self.db.clear_position_alert(user_id, address, position_id)
 
                         await asyncio.sleep(2)
@@ -665,6 +690,57 @@ class TelegramLPBot:
         except Exception as e:
             print(f"Failed to send alert to {user_id}: {e}")
 
+    async def send_back_in_range_alert(self, user_id: int, wallet: Dict, position: Dict, pool_info: Dict):
+        """Send notification when position comes back in range"""
+        token0_sym = position.get('token0_symbol', 'Token0')
+        token1_sym = position.get('token1_symbol', 'Token1')
+        wallet_display = self.db.get_wallet_display_name(wallet['address'], wallet.get('alias'))
+
+        alert_msg = (
+            f"✅ *BACK IN RANGE*\n\n"
+            f"💼 Wallet: {wallet_display}\n"
+            f"📌 Position #{position['token_id']}\n"
+            f"🔄 Pair: *{token0_sym}/{token1_sym}*\n\n"
+            f"🎯 Current Tick: {pool_info['current_tick']}\n"
+            f"💰 Current Price: ${pool_info['price']:.6f}\n\n"
+            f"✅ Your position is now actively earning fees again!"
+        )
+
+        try:
+            await self.application.bot.send_message(
+                chat_id=user_id,
+                text=alert_msg,
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            print(f"Failed to send back in range alert to {user_id}: {e}")
+
+    async def send_extended_out_of_range_alert(self, user_id: int, wallet: Dict, position: Dict, pool_info: Dict, hours_out: float):
+        """Send alert when position has been out of range for >4 hours"""
+        token0_sym = position.get('token0_symbol', 'Token0')
+        token1_sym = position.get('token1_symbol', 'Token1')
+        wallet_display = self.db.get_wallet_display_name(wallet['address'], wallet.get('alias'))
+
+        alert_msg = (
+            f"⏰ *EXTENDED OUT OF RANGE*\n\n"
+            f"💼 Wallet: {wallet_display}\n"
+            f"📌 Position #{position['token_id']}\n"
+            f"🔄 Pair: *{token0_sym}/{token1_sym}*\n\n"
+            f"⚠️ Out of range for *{hours_out:.1f} hours*\n\n"
+            f"🎯 Current Tick: {pool_info['current_tick']}\n"
+            f"💰 Current Price: ${pool_info['price']:.6f}\n\n"
+            f"💡 Consider adjusting your position range."
+        )
+
+        try:
+            await self.application.bot.send_message(
+                chat_id=user_id,
+                text=alert_msg,
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            print(f"Failed to send extended alert to {user_id}: {e}")
+
     async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         await update.message.reply_text(
@@ -686,9 +762,11 @@ class TelegramLPBot:
             f"/positions - View all LP positions\n"
             f"/alerts - View OUT OF RANGE positions\n\n"
             f"🔔 *Notifications:*\n"
-            f"Managed via /wallets → 🔔 Notifications\n"
+            f"• Managed via /wallets → 🔔 Notifications\n"
+            f"• Receive alerts when positions go OUT OF RANGE\n\n"
             f"🎛️ *Admin Commands:*\n"
-            f"/broadcast - Send message to all users (admin only)"
+            f"/broadcast - Send message to all users (admin only)\n\n"
+            f"💡 *Tip:* Use the buttons below for quick access!"
         )
 
         await update.message.reply_text(

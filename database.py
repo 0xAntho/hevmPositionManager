@@ -50,9 +50,11 @@ class Database:
                 user_id INTEGER NOT NULL,
                 wallet_address TEXT NOT NULL,
                 position_id INTEGER NOT NULL,
+                alert_type TEXT NOT NULL,
                 alerted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                out_of_range_since TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(user_id),
-                UNIQUE(user_id, wallet_address, position_id)
+                UNIQUE(user_id, wallet_address, position_id, alert_type)
             )
         """)
 
@@ -218,41 +220,60 @@ class Database:
 
         return wallets
 
-    def has_been_alerted(self, user_id: int, wallet_address: str, position_id: int) -> bool:
+    def has_been_alerted(self, user_id: int, wallet_address: str, position_id: int, alert_type: str = 'out_of_range') -> bool:
         """Check if user has already been alerted for this position"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
         cursor.execute("""
             SELECT COUNT(*) FROM position_alerts 
-            WHERE user_id = ? AND wallet_address = ? AND position_id = ?
-        """, (user_id, wallet_address, position_id))
+            WHERE user_id = ? AND wallet_address = ? AND position_id = ? AND alert_type = ?
+        """, (user_id, wallet_address, position_id, alert_type))
 
         return cursor.fetchone()[0] > 0
 
-    def mark_as_alerted(self, user_id: int, wallet_address: str, position_id: int):
+    def mark_as_alerted(self, user_id: int, wallet_address: str, position_id: int, alert_type: str = 'out_of_range', out_of_range_since: str = None):
         """Mark that user has been alerted for this position"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
         cursor.execute("""
-            INSERT OR IGNORE INTO position_alerts (user_id, wallet_address, position_id)
-            VALUES (?, ?, ?)
-        """, (user_id, wallet_address, position_id))
+            INSERT OR REPLACE INTO position_alerts (user_id, wallet_address, position_id, alert_type, out_of_range_since, alerted_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, (user_id, wallet_address, position_id, alert_type, out_of_range_since))
 
         conn.commit()
 
-    def clear_position_alert(self, user_id: int, wallet_address: str, position_id: int):
+    def clear_position_alert(self, user_id: int, wallet_address: str, position_id: int, alert_type: str = None):
         """Clear alert for position (when it comes back in range)"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("""
-            DELETE FROM position_alerts 
-            WHERE user_id = ? AND wallet_address = ? AND position_id = ?
-        """, (user_id, wallet_address, position_id))
+        if alert_type:
+            cursor.execute("""
+                DELETE FROM position_alerts 
+                WHERE user_id = ? AND wallet_address = ? AND position_id = ? AND alert_type = ?
+            """, (user_id, wallet_address, position_id, alert_type))
+        else:
+            cursor.execute("""
+                DELETE FROM position_alerts 
+                WHERE user_id = ? AND wallet_address = ? AND position_id = ?
+            """, (user_id, wallet_address, position_id))
 
         conn.commit()
+
+    def get_out_of_range_since(self, user_id: int, wallet_address: str, position_id: int) -> Optional[str]:
+        """Get timestamp when position went out of range"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT out_of_range_since FROM position_alerts 
+            WHERE user_id = ? AND wallet_address = ? AND position_id = ? AND alert_type = 'out_of_range'
+        """, (user_id, wallet_address, position_id))
+
+        result = cursor.fetchone()
+        return result[0] if result else None
 
     def toggle_notifications(self, user_id: int, address: str, enabled: bool):
         """Enable/disable notifications for a wallet"""
